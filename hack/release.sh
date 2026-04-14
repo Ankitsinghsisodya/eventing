@@ -69,7 +69,7 @@ function build_release() {
   ARTIFACTS_TO_PUBLISH=$(cat "${YAML_LIST}" | tr '\n' ' ')
   if (( ! PUBLISH_RELEASE )); then
     # Copy the generated YAML files to the repo root dir if not publishing.
-    cp ${ARTIFACTS_TO_PUBLISH} "${REPO_ROOT_DIR}"
+    cp "${ARTIFACTS_TO_PUBLISH}" "${REPO_ROOT_DIR}"
   fi
 }
 
