@@ -67,7 +67,6 @@ function build_release() {
   export TAG
   "$(dirname "$0")/generate-yamls.sh" "${REPO_ROOT_DIR}" "${YAML_LIST}"
   mapfile -t artifacts < "${YAML_LIST}"
-  ARTIFACTS_TO_PUBLISH="${artifacts[*]}"
   if (( ! PUBLISH_RELEASE )); then
     # Copy the generated YAML files to the repo root dir if not publishing.
     cp "${artifacts[@]}" "${REPO_ROOT_DIR}"
