@@ -10,12 +10,15 @@ linters:
   enable:
     - asciicheck
     - gosec
+    - misspell
     - prealloc
     - unconvert
     - unparam
   disable:
     - errcheck
   settings:
+    misspell:
+      locale: US
     staticcheck:
       checks:
       - all
