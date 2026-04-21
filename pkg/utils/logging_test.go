@@ -20,9 +20,9 @@ import (
 	"sync"
 	"testing"
 
-	corev1 "k8s.io/api/core/v1"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	corev1 "k8s.io/api/core/v1"
 )
 
 // logCapture is a minimal zapcore.Core that records log entries for assertions.
