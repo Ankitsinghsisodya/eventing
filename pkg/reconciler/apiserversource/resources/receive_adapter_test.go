@@ -176,6 +176,9 @@ O2dgzikq8iSy1BlRsVw=
 									Name:  source.EnvLoggingCfg,
 									Value: "",
 								}, {
+									Name:  source.EnvKlogVerbosity,
+									Value: "",
+								}, {
 									Name:  source.EnvObservabilityCfg,
 									Value: "",
 								},
@@ -368,7 +371,6 @@ func TestMakeReceiveAdapterWithDisableCache(t *testing.T) {
 					}},
 					EventMode:          "Resource",
 					ServiceAccountName: "source-svc-acct",
-					DisableCache:       tt.disableCache,
 				},
 			}
 

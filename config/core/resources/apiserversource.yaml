@@ -79,9 +79,6 @@ spec:
                     description: Extensions specify what attribute are added or overridden on the outbound event. Each `Extensions` key-value pair are set on the event as an attribute extension independently.
                     type: object
                     x-kubernetes-preserve-unknown-fields: true
-              disableCache:
-                description: If true, the adapter skips the initial LIST call and only watches for new events. Reduces API server load when watching resources across many namespaces. Pre-existing objects will not emit events on adapter startup.
-                type: boolean
               mode:
                 description: EventMode controls the format of the event. `Reference` sends a dataref event type for the resource under watch. `Resource` send the full resource lifecycle event. Defaults to `Reference`
                 type: string

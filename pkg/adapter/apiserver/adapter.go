@@ -117,16 +117,31 @@ func (a *apiServerAdapter) startWatchOnly(ctx context.Context, stopCh <-chan str
 	if a.config.FailFast {
 		a.logger.Warn("disableCache=true takes precedence over failFast=true; running in no-cache mode without fail-fast behavior")
 	}
+
+	watchCtx, cancelWatchers := context.WithCancel(ctx)
+	defer cancelWatchers()
+
+	var wg sync.WaitGroup
 	for _, match := range matches {
 		if match.apiResource == nil {
 			a.logger.Errorf("could not retrieve information about resource %s: it doesn't exist. skipping...", match.resourceWatch.GVR.String())
 			continue
 		}
 		for _, res := range match.resourceInterfaces {
-			go a.watchResourceLoop(ctx, res, match.resourceWatch.LabelSelector, delegate)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				a.watchResourceLoop(watchCtx, res, match.resourceWatch.LabelSelector, delegate)
+			}()
 		}
 	}
-	<-stopCh
+
+	select {
+	case <-stopCh:
+	case <-ctx.Done():
+	}
+	cancelWatchers()
+	wg.Wait()
 	return nil
 }
 
@@ -139,6 +154,10 @@ func noCacheBackoff() wait.Backoff {
 		Cap:      60 * time.Second,
 	}
 }
+
+// noCacheWatchTimeout is the server-side timeout for each Watch call in no-cache mode.
+// Forces periodic reconnection so stale connections don't persist indefinitely.
+var noCacheWatchTimeout int64 = 5 * 60
 
 // watchResourceLoop runs a continuous List+Watch loop for a single resource interface.
 // A lightweight LIST (limit=1) is issued before each Watch to obtain the current
@@ -159,10 +178,12 @@ func (a *apiServerAdapter) watchResourceLoop(ctx context.Context, ri dynamic.Res
 				return
 			}
 			a.logger.Errorw("failed to list for resourceVersion, retrying", zap.Error(err))
+			t := time.NewTimer(backoff.Step())
 			select {
 			case <-ctx.Done():
+				t.Stop()
 				return
-			case <-time.After(backoff.Step()):
+			case <-t.C:
 			}
 			continue
 		}
@@ -172,16 +193,19 @@ func (a *apiServerAdapter) watchResourceLoop(ctx context.Context, ri dynamic.Res
 		w, err := ri.Watch(ctx, metav1.ListOptions{
 			LabelSelector:   labelSelector,
 			ResourceVersion: rv,
+			TimeoutSeconds:  &noCacheWatchTimeout,
 		})
 		if err != nil {
 			if ctx.Err() != nil {
 				return
 			}
 			a.logger.Errorw("watch error, retrying", zap.Error(err))
+			t := time.NewTimer(backoff.Step())
 			select {
 			case <-ctx.Done():
+				t.Stop()
 				return
-			case <-time.After(backoff.Step()):
+			case <-t.C:
 			}
 			continue
 		}
@@ -206,15 +230,21 @@ func (a *apiServerAdapter) drainWatchEvents(ctx context.Context, w watch.Interfa
 			switch event.Type {
 			case watch.Added:
 				if obj, ok := event.Object.(*unstructured.Unstructured); ok {
-					_ = delegate.Add(obj)
+					if err := delegate.Add(obj); err != nil {
+						a.logger.Errorw("failed to add object to delegate store", zap.Error(err))
+					}
 				}
 			case watch.Modified:
 				if obj, ok := event.Object.(*unstructured.Unstructured); ok {
-					_ = delegate.Update(obj)
+					if err := delegate.Update(obj); err != nil {
+						a.logger.Errorw("failed to update object in delegate store", zap.Error(err))
+					}
 				}
 			case watch.Deleted:
 				if obj, ok := event.Object.(*unstructured.Unstructured); ok {
-					_ = delegate.Delete(obj)
+					if err := delegate.Delete(obj); err != nil {
+						a.logger.Errorw("failed to delete object from delegate store", zap.Error(err))
+					}
 				}
 			case watch.Error:
 				if status, ok := event.Object.(*metav1.Status); ok && status.Reason == metav1.StatusReasonGone {

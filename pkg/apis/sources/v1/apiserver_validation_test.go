@@ -269,6 +269,53 @@ func TestAPIServerValidationCallsSpecValidation(t *testing.T) {
 	assert.EqualError(t, err, "missing field(s): spec.resources", "Spec is not validated!")
 }
 
+func TestAPIServerDisableCacheAnnotationValidation(t *testing.T) {
+	validSrc := func() *ApiServerSource {
+		return &ApiServerSource{
+			Spec: ApiServerSourceSpec{
+				EventMode: "Resource",
+				Resources: []APIVersionKindSelector{{APIVersion: "v1", Kind: "Pod"}},
+				SourceSpec: duckv1.SourceSpec{
+					Sink: duckv1.Destination{
+						Ref: &duckv1.KReference{APIVersion: "v1", Kind: "Service", Name: "svc"},
+					},
+				},
+			},
+		}
+	}
+
+	t.Run("both annotations set is rejected", func(t *testing.T) {
+		src := validSrc()
+		src.Annotations = map[string]string{
+			DisableCacheAnnotation:    "true",
+			SkipPermissionsAnnotation: "true",
+		}
+		err := src.Validate(context.TODO())
+		if err == nil {
+			t.Fatal("expected validation error for conflicting annotations, got nil")
+		}
+		if !errors.Is(err, err) {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("only disable-cache annotation is valid", func(t *testing.T) {
+		src := validSrc()
+		src.Annotations = map[string]string{DisableCacheAnnotation: "true"}
+		if err := src.Validate(context.TODO()); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("only skip-permissions annotation is valid", func(t *testing.T) {
+		src := validSrc()
+		src.Annotations = map[string]string{SkipPermissionsAnnotation: "true"}
+		if err := src.Validate(context.TODO()); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+}
+
 func TestAPIServerFiltersValidation(t *testing.T) {
 	tests := []struct {
 		name         string
