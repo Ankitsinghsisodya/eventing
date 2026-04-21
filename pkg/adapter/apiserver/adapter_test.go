@@ -421,9 +421,6 @@ func TestAdapter_DisableCache(t *testing.T) {
 		}
 	}()
 
-	// Give the watch goroutines time to start.
-	time.Sleep(500 * time.Millisecond)
-
 	cancel()
 	<-done
 }
@@ -464,7 +461,10 @@ func TestAdapter_DisableCacheLightweightList(t *testing.T) {
 		_ = a.Start(ctx)
 	}()
 
-	time.Sleep(500 * time.Millisecond)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && len(tracker.get()) == 0 {
+		time.Sleep(10 * time.Millisecond)
+	}
 	cancel()
 	<-done
 
@@ -489,6 +489,11 @@ func TestAdapter_DisableCacheEventDelivery(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
 	dynClient := dynamicfake.NewSimpleDynamicClient(scheme, simplePod("existing-pod", "default"))
+	dynClient.PrependReactor("list", "pods", func(_ kubetesting.Action) (bool, runtime.Object, error) {
+		list := &unstructured.UnstructuredList{}
+		list.SetResourceVersion("100")
+		return true, list, nil
+	})
 	dynClient.PrependWatchReactor("pods", func(_ kubetesting.Action) (bool, watch.Interface, error) {
 		return true, fakeWatcher, nil
 	})
@@ -514,16 +519,8 @@ func TestAdapter_DisableCacheEventDelivery(t *testing.T) {
 		namespace: "default",
 	}
 
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		_ = a.Start(ctx)
-	}()
-
-	// Wait for the adapter to reach the watch.
-	time.Sleep(200 * time.Millisecond)
-
-	// Inject an ADDED event as *unstructured.Unstructured (the type the adapter expects).
+	// Pre-buffer the event before starting the adapter. The fake watcher has a
+	// 100-item channel; the adapter will drain it once the Watch() call is made.
 	newPod := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "v1",
@@ -536,6 +533,12 @@ func TestAdapter_DisableCacheEventDelivery(t *testing.T) {
 		},
 	}
 	fakeWatcher.Add(newPod)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = a.Start(ctx)
+	}()
 
 	// Poll until at least one CloudEvent is sent (or timeout).
 	deadline := time.Now().Add(2 * time.Second)

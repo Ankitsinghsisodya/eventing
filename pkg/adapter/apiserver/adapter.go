@@ -155,10 +155,6 @@ func noCacheBackoff() wait.Backoff {
 	}
 }
 
-// noCacheWatchTimeout is the server-side timeout for each Watch call in no-cache mode.
-// Forces periodic reconnection so stale connections don't persist indefinitely.
-var noCacheWatchTimeout int64 = 5 * 60
-
 // watchResourceLoop runs a continuous List+Watch loop for a single resource interface.
 // A lightweight LIST (limit=1) is issued before each Watch to obtain the current
 // resourceVersion so that Watch does not replay synthetic ADDED events for
@@ -188,11 +184,23 @@ func (a *apiServerAdapter) watchResourceLoop(ctx context.Context, ri dynamic.Res
 			continue
 		}
 		rv := list.GetResourceVersion()
+		if rv == "" {
+			a.logger.Warn("LIST returned empty resourceVersion, will retry after backoff")
+			t := time.NewTimer(backoff.Step())
+			select {
+			case <-ctx.Done():
+				t.Stop()
+				return
+			case <-t.C:
+			}
+			continue
+		}
 
+		timeout := int64(5 * 60)
 		w, err := ri.Watch(ctx, metav1.ListOptions{
 			LabelSelector:   labelSelector,
 			ResourceVersion: rv,
-			TimeoutSeconds:  &noCacheWatchTimeout,
+			TimeoutSeconds:  &timeout,
 		})
 		if err != nil {
 			if ctx.Err() != nil {

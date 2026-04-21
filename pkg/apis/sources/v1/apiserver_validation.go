@@ -35,14 +35,7 @@ const (
 )
 
 func (c *ApiServerSource) Validate(ctx context.Context) *apis.FieldError {
-	errs := c.Spec.Validate(ctx).ViaField("spec")
-	if c.Annotations[DisableCacheAnnotation] == "true" && c.Annotations[SkipPermissionsAnnotation] == "true" {
-		errs = errs.Also(apis.ErrGeneric(
-			DisableCacheAnnotation+" and "+SkipPermissionsAnnotation+" are mutually exclusive",
-			"metadata.annotations",
-		))
-	}
-	return errs
+	return c.Spec.Validate(ctx).ViaField("spec")
 }
 
 func (cs *ApiServerSourceSpec) Validate(ctx context.Context) *apis.FieldError {

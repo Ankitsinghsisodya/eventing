@@ -19,7 +19,6 @@ package v1
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -285,22 +284,14 @@ func TestAPIServerDisableCacheAnnotationValidation(t *testing.T) {
 		}
 	}
 
-	t.Run("both annotations set is rejected", func(t *testing.T) {
+	t.Run("both annotations set is valid", func(t *testing.T) {
 		src := validSrc()
 		src.Annotations = map[string]string{
 			DisableCacheAnnotation:    "true",
 			SkipPermissionsAnnotation: "true",
 		}
-		err := src.Validate(context.TODO())
-		if err == nil {
-			t.Fatal("expected validation error for conflicting annotations, got nil")
-		}
-		errStr := err.Error()
-		if !strings.Contains(errStr, "mutually exclusive") {
-			t.Errorf("error missing 'mutually exclusive': %v", err)
-		}
-		if !strings.Contains(errStr, "metadata.annotations") {
-			t.Errorf("error missing field path 'metadata.annotations': %v", err)
+		if err := src.Validate(context.TODO()); err != nil {
+			t.Errorf("unexpected error for combined annotations: %v", err)
 		}
 	})
 
