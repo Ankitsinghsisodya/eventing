@@ -96,6 +96,13 @@ type ApiServerSourceSpec struct {
 	//
 	// +optional
 	Filters []eventingv1.SubscriptionsAPIFilter `json:"filters,omitempty"`
+
+	// DisableCache if true, the adapter skips the initial LIST call and only
+	// watches for new events. This significantly reduces API server load when
+	// watching resources across many namespaces. Note: pre-existing objects
+	// will not emit events on adapter startup.
+	// +optional
+	DisableCache bool `json:"disableCache,omitempty"`
 }
 
 // ApiServerSourceStatus defines the observed state of ApiServerSource

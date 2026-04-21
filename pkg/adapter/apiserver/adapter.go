@@ -82,19 +82,79 @@ func (a *apiServerAdapter) start(ctx context.Context, stopCh <-chan struct{}) er
 		return fmt.Errorf("failed to collect resource matches: %v", err)
 	}
 
-	// we have two modes of operation for the ApiServerSource adapter:
-	// 1. Resilient Mode (Default): The adapter uses `reflector.Run()` to continuously retry establishing watches
+	// we have three modes of operation for the ApiServerSource adapter:
+	// 1. No-Cache Mode: The adapter skips the initial LIST call and only watches for new events.
+	//    This reduces API server load significantly when watching across many namespaces.
+	//    Pre-existing objects will not emit events on startup.
+	// 2. Resilient Mode (Default): The adapter uses `reflector.Run()` to continuously retry establishing watches
 	//    on resources, making it resilient to transient errors or delayed permission grants.
-	// 2. Fail-Fast Mode: In this mode, the adapter uses `reflector.ListAndWatchWithContext()`. If any resource watch
+	// 3. Fail-Fast Mode: In this mode, the adapter uses `reflector.ListAndWatchWithContext()`. If any resource watch
 	//    fails to be established on the first attempt, the entire adapter will fail immediately. This provides faster
 	//    feedback and a clearer failure state in environments where permissions are expected to be correct at startup.
 
+	if a.config.DisableCache {
+		a.logger.Info("Starting in no-cache mode. Initial LIST is skipped; only new events will be emitted.")
+		return a.startWatchOnly(ctx, stopCh, delegate, matches)
+	}
 	if a.config.FailFast {
 		a.logger.Info("Starting in fail-fast mode. Any single watch failure will stop the adapter.")
 		return a.startFailFast(ctx, stopCh, delegate, matches)
 	}
 	a.logger.Info("Starting in resilient mode. Watch failures will be retried.")
 	return a.startResilient(ctx, stopCh, delegate, matches)
+}
+
+// startWatchOnly starts watches without an initial LIST call, so pre-existing objects
+// are not enumerated. This avoids the N*namespaces LIST requests that cause client-side
+// throttling in large clusters.
+func (a *apiServerAdapter) startWatchOnly(ctx context.Context, stopCh <-chan struct{}, delegate cache.Store, matches []resourceWatchMatch) error {
+	for _, match := range matches {
+		if match.apiResource == nil {
+			a.logger.Errorf("could not retrieve information about resource %s: it doesn't exist. skipping...", match.resourceWatch.GVR.String())
+			continue
+		}
+		for _, res := range match.resourceInterfaces {
+			go func(ri dynamic.ResourceInterface, labelSelector string) {
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					default:
+					}
+
+					lo := metav1.ListOptions{LabelSelector: labelSelector}
+					w, err := ri.Watch(ctx, lo)
+					if err != nil {
+						a.logger.Errorw("watch error, retrying", zap.Error(err))
+						select {
+						case <-ctx.Done():
+							return
+						case <-time.After(5 * time.Second):
+						}
+						continue
+					}
+
+					for event := range w.ResultChan() {
+						obj, ok := event.Object.(*unstructured.Unstructured)
+						if !ok {
+							continue
+						}
+						switch event.Type {
+						case watch.Added:
+							_ = delegate.Add(obj)
+						case watch.Modified:
+							_ = delegate.Update(obj)
+						case watch.Deleted:
+							_ = delegate.Delete(obj)
+						}
+					}
+				}
+			}(res, match.resourceWatch.LabelSelector)
+		}
+	}
+
+	<-stopCh
+	return nil
 }
 
 func (a *apiServerAdapter) startResilient(ctx context.Context, stopCh <-chan struct{}, delegate cache.Store, matches []resourceWatchMatch) error {

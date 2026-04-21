@@ -380,3 +380,139 @@ func TestAdapter_FailFast(t *testing.T) {
 		})
 	}
 }
+
+func TestAdapter_DisableCache(t *testing.T) {
+	ce := adaptertest.NewTestClient()
+
+	config := Config{
+		Namespaces: []string{"default"},
+		Resources: []ResourceWatch{{
+			GVR: schema.GroupVersionResource{
+				Version:  "v1",
+				Resource: "pods",
+			},
+		}},
+		EventMode:    "Resource",
+		DisableCache: true,
+	}
+
+	ctx, _ := pkgtesting.SetupFakeContext(t)
+
+	a := &apiServerAdapter{
+		ce:     ce,
+		logger: logging.FromContext(ctx),
+		config: config,
+
+		discover: makeDiscoveryClient(),
+		k8s:      makeDynamicClient(simplePod("foo", "default")),
+		source:   "unit-test",
+		name:     "unittest",
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		err := a.Start(ctx)
+		if err != nil {
+			t.Logf("Start returned error: %v", err)
+		}
+	}()
+
+	// Give the watch goroutines time to start.
+	time.Sleep(500 * time.Millisecond)
+
+	cancel()
+	<-done
+}
+
+func TestAdapter_DisableCacheSkipsList(t *testing.T) {
+	ce := adaptertest.NewTestClient()
+
+	listCalled := false
+	gvr := schema.GroupVersionResource{Version: "v1", Resource: "pods"}
+
+	dynClient := makeDynamicClient(simplePod("existing-pod", "default"))
+	// Wrap the fake client to detect List calls.
+	trackedClient := &listTrackingClient{Interface: dynClient, gvr: gvr, listCalled: &listCalled}
+
+	config := Config{
+		Namespaces: []string{"default"},
+		Resources: []ResourceWatch{{GVR: gvr}},
+		EventMode:  "Resource",
+		DisableCache: true,
+	}
+
+	ctx, _ := pkgtesting.SetupFakeContext(t)
+	ctx, cancel := context.WithCancel(ctx)
+
+	a := &apiServerAdapter{
+		ce:       ce,
+		logger:   logging.FromContext(ctx),
+		config:   config,
+		discover: makeDiscoveryClient(),
+		k8s:      trackedClient,
+		source:   "unit-test",
+		name:     "unittest",
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = a.Start(ctx)
+	}()
+
+	time.Sleep(500 * time.Millisecond)
+	cancel()
+	<-done
+
+	if listCalled {
+		t.Error("expected no LIST call when DisableCache=true, but List was called")
+	}
+}
+
+// listTrackingClient wraps dynamic.Interface to detect List calls on a specific GVR.
+type listTrackingClient struct {
+	dynamic.Interface
+	gvr        schema.GroupVersionResource
+	listCalled *bool
+}
+
+func (c *listTrackingClient) Resource(gvr schema.GroupVersionResource) dynamic.NamespaceableResourceInterface {
+	return &listTrackingResourceClient{
+		NamespaceableResourceInterface: c.Interface.Resource(gvr),
+		gvr:                            gvr,
+		targetGVR:                      c.gvr,
+		listCalled:                     c.listCalled,
+	}
+}
+
+type listTrackingResourceClient struct {
+	dynamic.NamespaceableResourceInterface
+	gvr        schema.GroupVersionResource
+	targetGVR  schema.GroupVersionResource
+	listCalled *bool
+}
+
+func (r *listTrackingResourceClient) Namespace(ns string) dynamic.ResourceInterface {
+	return &listTrackingNamespacedClient{
+		ResourceInterface: r.NamespaceableResourceInterface.Namespace(ns),
+		targetGVR:         r.targetGVR,
+		gvr:               r.gvr,
+		listCalled:        r.listCalled,
+	}
+}
+
+type listTrackingNamespacedClient struct {
+	dynamic.ResourceInterface
+	gvr        schema.GroupVersionResource
+	targetGVR  schema.GroupVersionResource
+	listCalled *bool
+}
+
+func (r *listTrackingNamespacedClient) List(ctx context.Context, opts metav1.ListOptions) (*unstructured.UnstructuredList, error) {
+	if r.gvr == r.targetGVR {
+		*r.listCalled = true
+	}
+	return r.ResourceInterface.List(ctx, opts)
+}

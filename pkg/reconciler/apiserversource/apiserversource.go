@@ -252,6 +252,7 @@ func (r *Reconciler) createReceiveAdapter(ctx context.Context, src *v1.ApiServer
 		AllNamespaces: allNamespaces,
 		NodeSelector:  featureFlags.NodeSelector(),
 		FailFast:      skipPermissions == "true",
+		DisableCache:  src.Spec.DisableCache,
 	}
 
 	expected, err := resources.MakeReceiveAdapter(&adapterArgs)
