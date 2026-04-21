@@ -48,32 +48,40 @@ func GetLoggingConfig(ctx context.Context, namespace, loggingConfigMapName strin
 	return logging.NewConfigFromConfigMap(loggingConfigMap)
 }
 
+// klogFlagSet is initialized once at package load; reused on every verbosity update.
+var klogFlagSet = func() *flag.FlagSet {
+	fs := flag.NewFlagSet("klog", flag.ContinueOnError)
+	klog.InitFlags(fs)
+	return fs
+}()
+
 // SetKlogVerbosityFromConfigMap reads klog-verbosity from the ConfigMap data and
-// applies it to klog. Missing or "0" values are no-ops.
+// applies it to klog. Missing, empty, or "0" values are no-ops.
+// Valid range is 0–9.
 func SetKlogVerbosityFromConfigMap(data map[string]string) error {
 	level, ok := data[KlogVerbosityKey]
 	if !ok || level == "0" || level == "" {
 		return nil
 	}
 
-	if _, err := strconv.Atoi(level); err != nil {
-		return fmt.Errorf("invalid %s value %q: must be an integer", KlogVerbosityKey, level)
+	n, err := strconv.Atoi(level)
+	if err != nil || n < 0 || n > 9 {
+		return fmt.Errorf("invalid %s value %q: must be an integer between 0 and 9", KlogVerbosityKey, level)
 	}
 
-	fs := flag.NewFlagSet("klog", flag.ContinueOnError)
-	klog.InitFlags(fs)
-	return fs.Set("v", level)
+	return klogFlagSet.Set("v", level)
 }
 
 // UpdateKlogVerbosityFromConfigMap returns a ConfigMap watch handler that updates
 // klog verbosity when the config-logging ConfigMap changes.
 func UpdateKlogVerbosityFromConfigMap(logger *zap.SugaredLogger) func(*corev1.ConfigMap) {
 	return func(cm *corev1.ConfigMap) {
+		level := cm.Data[KlogVerbosityKey]
 		if err := SetKlogVerbosityFromConfigMap(cm.Data); err != nil {
 			logger.Warnw("Failed to update klog verbosity", zap.Error(err))
 			return
 		}
-		if level, ok := cm.Data[KlogVerbosityKey]; ok {
+		if level != "" && level != "0" {
 			logger.Infow("Updated klog verbosity", zap.String("level", level))
 		}
 	}
