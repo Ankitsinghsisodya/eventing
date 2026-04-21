@@ -18,13 +18,22 @@ package utils
 
 import (
 	"context"
+	"flag"
+	"fmt"
+	"strconv"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/klog/v2"
 
+	"go.uber.org/zap"
 	kubeclient "knative.dev/pkg/client/injection/kube/client"
 	"knative.dev/pkg/logging"
 )
+
+// KlogVerbosityKey is the key in config-logging ConfigMap for klog verbosity level.
+const KlogVerbosityKey = "klog-verbosity"
 
 // GetLoggingConfig fetches the logging ConfigMap from the given namespace and
 // parses it into a *logging.Config. If the ConfigMap is not found, it returns
@@ -37,4 +46,35 @@ func GetLoggingConfig(ctx context.Context, namespace, loggingConfigMapName strin
 		return nil, err
 	}
 	return logging.NewConfigFromConfigMap(loggingConfigMap)
+}
+
+// SetKlogVerbosityFromConfigMap reads klog-verbosity from the ConfigMap data and
+// applies it to klog. Missing or "0" values are no-ops.
+func SetKlogVerbosityFromConfigMap(data map[string]string) error {
+	level, ok := data[KlogVerbosityKey]
+	if !ok || level == "0" || level == "" {
+		return nil
+	}
+
+	if _, err := strconv.Atoi(level); err != nil {
+		return fmt.Errorf("invalid %s value %q: must be an integer", KlogVerbosityKey, level)
+	}
+
+	fs := flag.NewFlagSet("klog", flag.ContinueOnError)
+	klog.InitFlags(fs)
+	return fs.Set("v", level)
+}
+
+// UpdateKlogVerbosityFromConfigMap returns a ConfigMap watch handler that updates
+// klog verbosity when the config-logging ConfigMap changes.
+func UpdateKlogVerbosityFromConfigMap(logger *zap.SugaredLogger) func(*corev1.ConfigMap) {
+	return func(cm *corev1.ConfigMap) {
+		if err := SetKlogVerbosityFromConfigMap(cm.Data); err != nil {
+			logger.Warnw("Failed to update klog verbosity", zap.Error(err))
+			return
+		}
+		if level, ok := cm.Data[KlogVerbosityKey]; ok {
+			logger.Infow("Updated klog verbosity", zap.String("level", level))
+		}
+	}
 }
