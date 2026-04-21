@@ -21,6 +21,7 @@ import (
 	"flag"
 	"fmt"
 	"strconv"
+	"sync"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -49,18 +50,22 @@ func GetLoggingConfig(ctx context.Context, namespace, loggingConfigMapName strin
 }
 
 // klogFlagSet is initialized once at package load; reused on every verbosity update.
-var klogFlagSet = func() *flag.FlagSet {
-	fs := flag.NewFlagSet("klog", flag.ContinueOnError)
-	klog.InitFlags(fs)
-	return fs
-}()
+// klogMu guards all writes to klogFlagSet — flag.FlagSet.Set is not goroutine-safe.
+var (
+	klogFlagSet = func() *flag.FlagSet {
+		fs := flag.NewFlagSet("klog", flag.ContinueOnError)
+		klog.InitFlags(fs)
+		return fs
+	}()
+	klogMu sync.Mutex
+)
 
 // SetKlogVerbosityFromConfigMap reads klog-verbosity from the ConfigMap data and
-// applies it to klog. Missing, empty, or "0" values are no-ops.
+// applies it to klog. Missing or empty values are no-ops; "0" resets verbosity.
 // Valid range is 0–9.
 func SetKlogVerbosityFromConfigMap(data map[string]string) error {
 	level, ok := data[KlogVerbosityKey]
-	if !ok || level == "0" || level == "" {
+	if !ok || level == "" {
 		return nil
 	}
 
@@ -69,6 +74,8 @@ func SetKlogVerbosityFromConfigMap(data map[string]string) error {
 		return fmt.Errorf("invalid %s value %q: must be an integer between 0 and 9", KlogVerbosityKey, level)
 	}
 
+	klogMu.Lock()
+	defer klogMu.Unlock()
 	return klogFlagSet.Set("v", level)
 }
 
