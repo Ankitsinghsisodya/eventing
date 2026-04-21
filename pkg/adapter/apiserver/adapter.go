@@ -19,6 +19,7 @@ package apiserver
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/watch"
 
 	"k8s.io/client-go/discovery"
@@ -104,57 +106,126 @@ func (a *apiServerAdapter) start(ctx context.Context, stopCh <-chan struct{}) er
 	return a.startResilient(ctx, stopCh, delegate, matches)
 }
 
-// startWatchOnly starts watches without an initial LIST call, so pre-existing objects
-// are not enumerated. This avoids the N*namespaces LIST requests that cause client-side
-// throttling in large clusters.
+// startWatchOnly starts watches for all matched resources. It performs a lightweight
+// LIST (limit=1) per resource interface to obtain the current resourceVersion, then
+// issues a Watch from that point. This means pre-existing objects do not produce
+// events on startup, and startup API load is O(resources*namespaces) lightweight
+// LISTs rather than full object dumps.
+//
+// When both DisableCache and FailFast are set, DisableCache takes precedence.
 func (a *apiServerAdapter) startWatchOnly(ctx context.Context, stopCh <-chan struct{}, delegate cache.Store, matches []resourceWatchMatch) error {
+	if a.config.FailFast {
+		a.logger.Warn("disableCache=true takes precedence over failFast=true; running in no-cache mode without fail-fast behavior")
+	}
 	for _, match := range matches {
 		if match.apiResource == nil {
 			a.logger.Errorf("could not retrieve information about resource %s: it doesn't exist. skipping...", match.resourceWatch.GVR.String())
 			continue
 		}
 		for _, res := range match.resourceInterfaces {
-			go func(ri dynamic.ResourceInterface, labelSelector string) {
-				for {
-					select {
-					case <-ctx.Done():
-						return
-					default:
-					}
-
-					lo := metav1.ListOptions{LabelSelector: labelSelector}
-					w, err := ri.Watch(ctx, lo)
-					if err != nil {
-						a.logger.Errorw("watch error, retrying", zap.Error(err))
-						select {
-						case <-ctx.Done():
-							return
-						case <-time.After(5 * time.Second):
-						}
-						continue
-					}
-
-					for event := range w.ResultChan() {
-						obj, ok := event.Object.(*unstructured.Unstructured)
-						if !ok {
-							continue
-						}
-						switch event.Type {
-						case watch.Added:
-							_ = delegate.Add(obj)
-						case watch.Modified:
-							_ = delegate.Update(obj)
-						case watch.Deleted:
-							_ = delegate.Delete(obj)
-						}
-					}
-				}
-			}(res, match.resourceWatch.LabelSelector)
+			go a.watchResourceLoop(ctx, res, match.resourceWatch.LabelSelector, delegate)
 		}
 	}
-
 	<-stopCh
 	return nil
+}
+
+func noCacheBackoff() wait.Backoff {
+	return wait.Backoff{
+		Duration: 1 * time.Second,
+		Factor:   2.0,
+		Jitter:   0.1,
+		Steps:    math.MaxInt32,
+		Cap:      60 * time.Second,
+	}
+}
+
+// watchResourceLoop runs a continuous List+Watch loop for a single resource interface.
+// A lightweight LIST (limit=1) is issued before each Watch to obtain the current
+// resourceVersion so that Watch does not replay synthetic ADDED events for
+// pre-existing objects (the behaviour when resourceVersion="" is passed to Watch).
+// On watch.Error with StatusReasonGone (HTTP 410 — resourceVersion expired from the
+// watch cache), the loop re-lists to get a fresh resourceVersion.
+// All failures back off exponentially with jitter before retrying.
+func (a *apiServerAdapter) watchResourceLoop(ctx context.Context, ri dynamic.ResourceInterface, labelSelector string, delegate cache.Store) {
+	backoff := noCacheBackoff()
+	for ctx.Err() == nil {
+		list, err := ri.List(ctx, metav1.ListOptions{
+			LabelSelector: labelSelector,
+			Limit:         1,
+		})
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			a.logger.Errorw("failed to list for resourceVersion, retrying", zap.Error(err))
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(backoff.Step()):
+			}
+			continue
+		}
+		rv := list.GetResourceVersion()
+		backoff = noCacheBackoff()
+
+		w, err := ri.Watch(ctx, metav1.ListOptions{
+			LabelSelector:   labelSelector,
+			ResourceVersion: rv,
+		})
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			a.logger.Errorw("watch error, retrying", zap.Error(err))
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(backoff.Step()):
+			}
+			continue
+		}
+		backoff = noCacheBackoff()
+		a.drainWatchEvents(ctx, w, delegate)
+	}
+}
+
+// drainWatchEvents reads from a watch until the context is done, the watch
+// channel closes, or a watch.Error event is received. On StatusReasonGone
+// (HTTP 410), it returns immediately so watchResourceLoop can re-list.
+func (a *apiServerAdapter) drainWatchEvents(ctx context.Context, w watch.Interface, delegate cache.Store) {
+	defer w.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event, ok := <-w.ResultChan():
+			if !ok {
+				return
+			}
+			switch event.Type {
+			case watch.Added:
+				if obj, ok := event.Object.(*unstructured.Unstructured); ok {
+					_ = delegate.Add(obj)
+				}
+			case watch.Modified:
+				if obj, ok := event.Object.(*unstructured.Unstructured); ok {
+					_ = delegate.Update(obj)
+				}
+			case watch.Deleted:
+				if obj, ok := event.Object.(*unstructured.Unstructured); ok {
+					_ = delegate.Delete(obj)
+				}
+			case watch.Error:
+				if status, ok := event.Object.(*metav1.Status); ok && status.Reason == metav1.StatusReasonGone {
+					a.logger.Info("watch resourceVersion expired (410 Gone), will re-list")
+				} else {
+					a.logger.Errorw("received watch error event", zap.Any("object", event.Object))
+				}
+				return
+			}
+		}
+	}
 }
 
 func (a *apiServerAdapter) startResilient(ctx context.Context, stopCh <-chan struct{}, delegate cache.Store, matches []resourceWatchMatch) error {
