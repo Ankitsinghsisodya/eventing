@@ -176,9 +176,6 @@ O2dgzikq8iSy1BlRsVw=
 									Name:  source.EnvLoggingCfg,
 									Value: "",
 								}, {
-									Name:  source.EnvKlogVerbosity,
-									Value: "",
-								}, {
 									Name:  source.EnvObservabilityCfg,
 									Value: "",
 								},

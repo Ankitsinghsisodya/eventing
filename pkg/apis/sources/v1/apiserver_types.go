@@ -104,7 +104,6 @@ type ApiServerSourceSpec struct {
 	//
 	// +optional
 	Filters []eventingv1.SubscriptionsAPIFilter `json:"filters,omitempty"`
-
 }
 
 // ApiServerSourceStatus defines the observed state of ApiServerSource
