@@ -19,6 +19,7 @@ package v1
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -294,8 +295,12 @@ func TestAPIServerDisableCacheAnnotationValidation(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected validation error for conflicting annotations, got nil")
 		}
-		if !errors.Is(err, err) {
-			t.Errorf("unexpected error: %v", err)
+		errStr := err.Error()
+		if !strings.Contains(errStr, "mutually exclusive") {
+			t.Errorf("error missing 'mutually exclusive': %v", err)
+		}
+		if !strings.Contains(errStr, "metadata.annotations") {
+			t.Errorf("error missing field path 'metadata.annotations': %v", err)
 		}
 	})
 

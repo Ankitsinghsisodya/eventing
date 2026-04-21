@@ -188,7 +188,6 @@ func (a *apiServerAdapter) watchResourceLoop(ctx context.Context, ri dynamic.Res
 			continue
 		}
 		rv := list.GetResourceVersion()
-		backoff = noCacheBackoff()
 
 		w, err := ri.Watch(ctx, metav1.ListOptions{
 			LabelSelector:   labelSelector,
@@ -209,8 +208,21 @@ func (a *apiServerAdapter) watchResourceLoop(ctx context.Context, ri dynamic.Res
 			}
 			continue
 		}
-		backoff = noCacheBackoff()
+
+		watchStart := time.Now()
 		a.drainWatchEvents(ctx, w, delegate)
+		if time.Since(watchStart) > 30*time.Second {
+			// Watch was long-lived; treat connection as stable and reset backoff.
+			backoff = noCacheBackoff()
+		} else {
+			t := time.NewTimer(backoff.Step())
+			select {
+			case <-ctx.Done():
+				t.Stop()
+				return
+			case <-t.C:
+			}
+		}
 	}
 }
 
