@@ -61,35 +61,38 @@ var (
 )
 
 // SetKlogVerbosityFromConfigMap reads klog-verbosity from the ConfigMap data and
-// applies it to klog. Missing or empty values are no-ops; "0" resets verbosity.
-// Valid range is 0–9.
-func SetKlogVerbosityFromConfigMap(data map[string]string) error {
+// applies it to klog. Missing, empty, or "0" values are no-ops and return
+// (false, nil). A level in the range 1–9 is applied and returns (true, nil).
+func SetKlogVerbosityFromConfigMap(data map[string]string) (bool, error) {
 	level, ok := data[KlogVerbosityKey]
-	if !ok || level == "" {
-		return nil
+	if !ok || level == "" || level == "0" {
+		return false, nil
 	}
 
 	n, err := strconv.Atoi(level)
 	if err != nil || n < 0 || n > 9 {
-		return fmt.Errorf("invalid %s value %q: must be an integer between 0 and 9", KlogVerbosityKey, level)
+		return false, fmt.Errorf("invalid %s value %q: must be an integer between 0 and 9", KlogVerbosityKey, level)
 	}
 
 	klogMu.Lock()
 	defer klogMu.Unlock()
-	return klogFlagSet.Set("v", level)
+	if err := klogFlagSet.Set("v", level); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // UpdateKlogVerbosityFromConfigMap returns a ConfigMap watch handler that updates
 // klog verbosity when the config-logging ConfigMap changes.
 func UpdateKlogVerbosityFromConfigMap(logger *zap.SugaredLogger) func(*corev1.ConfigMap) {
 	return func(cm *corev1.ConfigMap) {
-		level := cm.Data[KlogVerbosityKey]
-		if err := SetKlogVerbosityFromConfigMap(cm.Data); err != nil {
+		applied, err := SetKlogVerbosityFromConfigMap(cm.Data)
+		if err != nil {
 			logger.Warnw("Failed to update klog verbosity", zap.Error(err))
 			return
 		}
-		if level != "" && level != "0" {
-			logger.Infow("Updated klog verbosity", zap.String("level", level))
+		if applied {
+			logger.Infow("Updated klog verbosity", zap.String("level", cm.Data[KlogVerbosityKey]))
 		}
 	}
 }

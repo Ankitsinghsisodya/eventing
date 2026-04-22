@@ -163,7 +163,7 @@ func (e *EnvConfig) GetLogger() *zap.SugaredLogger {
 
 		logger, _ := logging.NewLoggerFromConfig(loggingConfig, e.Component)
 
-		if err := pkgutils.SetKlogVerbosityFromConfigMap(map[string]string{
+		if _, err := pkgutils.SetKlogVerbosityFromConfigMap(map[string]string{
 			pkgutils.KlogVerbosityKey: e.KlogVerbosity,
 		}); err != nil {
 			logger.Warnw("Failed to set klog verbosity", zap.Error(err))

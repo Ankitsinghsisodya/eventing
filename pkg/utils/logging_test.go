@@ -67,62 +67,75 @@ func newCaptureLogger() (*zap.SugaredLogger, *logCapture) {
 
 func TestSetKlogVerbosityFromConfigMap(t *testing.T) {
 	tests := []struct {
-		name    string
-		data    map[string]string
-		wantErr bool
+		name        string
+		data        map[string]string
+		wantApplied bool
+		wantErr     bool
 	}{
 		{
-			name:    "key absent",
-			data:    map[string]string{},
-			wantErr: false,
+			name:        "key absent",
+			data:        map[string]string{},
+			wantApplied: false,
+			wantErr:     false,
 		},
 		{
-			name:    "zero value",
-			data:    map[string]string{KlogVerbosityKey: "0"},
-			wantErr: false,
+			name:        "zero value",
+			data:        map[string]string{KlogVerbosityKey: "0"},
+			wantApplied: false,
+			wantErr:     false,
 		},
 		{
-			name:    "empty value",
-			data:    map[string]string{KlogVerbosityKey: ""},
-			wantErr: false,
+			name:        "empty value",
+			data:        map[string]string{KlogVerbosityKey: ""},
+			wantApplied: false,
+			wantErr:     false,
 		},
 		{
-			name:    "valid level 5",
-			data:    map[string]string{KlogVerbosityKey: "5"},
-			wantErr: false,
+			name:        "valid level 5",
+			data:        map[string]string{KlogVerbosityKey: "5"},
+			wantApplied: true,
+			wantErr:     false,
 		},
 		{
-			name:    "valid level 9",
-			data:    map[string]string{KlogVerbosityKey: "9"},
-			wantErr: false,
+			name:        "valid level 9",
+			data:        map[string]string{KlogVerbosityKey: "9"},
+			wantApplied: true,
+			wantErr:     false,
 		},
 		{
-			name:    "invalid non-integer",
-			data:    map[string]string{KlogVerbosityKey: "high"},
-			wantErr: true,
+			name:        "invalid non-integer",
+			data:        map[string]string{KlogVerbosityKey: "high"},
+			wantApplied: false,
+			wantErr:     true,
 		},
 		{
-			name:    "invalid float",
-			data:    map[string]string{KlogVerbosityKey: "3.5"},
-			wantErr: true,
+			name:        "invalid float",
+			data:        map[string]string{KlogVerbosityKey: "3.5"},
+			wantApplied: false,
+			wantErr:     true,
 		},
 		{
-			name:    "out of range level 10",
-			data:    map[string]string{KlogVerbosityKey: "10"},
-			wantErr: true,
+			name:        "out of range level 10",
+			data:        map[string]string{KlogVerbosityKey: "10"},
+			wantApplied: false,
+			wantErr:     true,
 		},
 		{
-			name:    "negative level",
-			data:    map[string]string{KlogVerbosityKey: "-1"},
-			wantErr: true,
+			name:        "negative level",
+			data:        map[string]string{KlogVerbosityKey: "-1"},
+			wantApplied: false,
+			wantErr:     true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := SetKlogVerbosityFromConfigMap(tt.data)
+			applied, err := SetKlogVerbosityFromConfigMap(tt.data)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("SetKlogVerbosityFromConfigMap() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if applied != tt.wantApplied {
+				t.Errorf("SetKlogVerbosityFromConfigMap() applied = %v, wantApplied %v", applied, tt.wantApplied)
 			}
 		})
 	}

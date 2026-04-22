@@ -98,7 +98,7 @@ func (c *loggerConfiguratorFromConfigMap) CreateLogger(ctx context.Context) *zap
 	logger, atomicLevel := SetupLoggerFromConfig(lc, c.component)
 
 	if lcm != nil {
-		if err := utils.SetKlogVerbosityFromConfigMap(lcm.Data); err != nil {
+		if _, err := utils.SetKlogVerbosityFromConfigMap(lcm.Data); err != nil {
 			logger.Warnw("Failed to set initial klog verbosity", zap.Error(err))
 		}
 	}
