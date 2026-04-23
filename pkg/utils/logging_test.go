@@ -81,7 +81,7 @@ func TestSetKlogVerbosityFromConfigMap(t *testing.T) {
 		{
 			name:        "zero value",
 			data:        map[string]string{KlogVerbosityKey: "0"},
-			wantApplied: false,
+			wantApplied: true,
 			wantErr:     false,
 		},
 		{
@@ -155,10 +155,10 @@ func TestUpdateKlogVerbosityFromConfigMap(t *testing.T) {
 			wantInfo: false,
 		},
 		{
-			name:     "zero value - no log",
+			name:     "zero value - info logged",
 			data:     map[string]string{KlogVerbosityKey: "0"},
 			wantWarn: false,
-			wantInfo: false,
+			wantInfo: true,
 		},
 		{
 			name:     "empty value - no log",

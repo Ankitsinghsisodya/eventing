@@ -60,12 +60,11 @@ var (
 	klogMu sync.Mutex
 )
 
-// SetKlogVerbosityFromConfigMap reads klog-verbosity from the ConfigMap data and
-// applies it to klog. Missing, empty, or "0" values are no-ops and return
-// (false, nil). A level in the range 1–9 is applied and returns (true, nil).
-func SetKlogVerbosityFromConfigMap(data map[string]string) (bool, error) {
-	level, ok := data[KlogVerbosityKey]
-	if !ok || level == "" || level == "0" {
+// SetKlogVerbosity applies the given verbosity level string directly to klog.
+// An empty string is a no-op and returns (false, nil).
+// "0" resets verbosity and levels 1–9 raise it; both return (true, nil).
+func SetKlogVerbosity(level string) (bool, error) {
+	if level == "" {
 		return false, nil
 	}
 
@@ -80,6 +79,17 @@ func SetKlogVerbosityFromConfigMap(data map[string]string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// SetKlogVerbosityFromConfigMap reads klog-verbosity from the ConfigMap data and
+// applies it to klog. Missing or empty values are no-ops and return (false, nil).
+// "0" resets verbosity and levels 1–9 raise it; both return (true, nil).
+func SetKlogVerbosityFromConfigMap(data map[string]string) (bool, error) {
+	level, ok := data[KlogVerbosityKey]
+	if !ok || level == "" {
+		return false, nil
+	}
+	return SetKlogVerbosity(level)
 }
 
 // UpdateKlogVerbosityFromConfigMap returns a ConfigMap watch handler that updates

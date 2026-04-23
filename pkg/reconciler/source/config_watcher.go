@@ -136,10 +136,6 @@ func (cw *ConfigWatcher) updateFromLoggingConfigMap(cfg *corev1.ConfigMap) {
 	cw.loggingCfg = loggingCfg
 	cw.klogVerbosity = cfg.Data[pkgutils.KlogVerbosityKey]
 
-	if _, err := pkgutils.SetKlogVerbosityFromConfigMap(cfg.Data); err != nil {
-		cw.logger.Warnw("failed to apply klog verbosity", zap.Error(err))
-	}
-
 	cw.logger.Debugw("Updated logging config from ConfigMap", zap.Any("ConfigMap", cfg))
 }
 
