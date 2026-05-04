@@ -9,6 +9,8 @@ on:
       - 'go.sum'
       - 'config/**'
       - 'test/**'
+      - 'hack/**'
+      - 'third_party/**'
       - '.github/workflows/kind-e2e.yaml'
 
 defaults:
